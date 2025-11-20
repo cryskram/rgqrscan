@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { google } from "googleapis";
 
 type ScanRequest = {
   qr: string;
@@ -15,6 +16,28 @@ const TYPE_TO_COLUMN: Record<ScanRequest["type"], string> = {
   dinner: "dinner",
 };
 
+async function appendToGoogleSheet(row: any[]) {
+  const auth = new google.auth.GoogleAuth({
+    credentials: {
+      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!,
+      private_key: process.env.GOOGLE_SERVICE_PRIVATE_KEY!.replace(
+        /\\n/g,
+        "\n"
+      ),
+    },
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+
+  const sheets = google.sheets({ version: "v4", auth });
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID!,
+    range: "Sheet1!A:F",
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [row] },
+  });
+}
+
 function extractUid(payload: string) {
   try {
     const url = new URL(payload);
@@ -29,7 +52,6 @@ function extractUid(payload: string) {
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as ScanRequest;
-
     if (!body || !body.qr || !body.type) {
       return NextResponse.json({
         success: false,
@@ -48,17 +70,14 @@ export async function POST(req: Request) {
 
     if (pErr) {
       console.error("Supabase fetch error:", pErr);
-      return NextResponse.json(
-        { success: false, message: "Database error" },
-        { status: 500 }
-      );
+      return NextResponse.json({ success: false, message: "DB error" });
     }
 
     if (!participant) {
-      return NextResponse.json(
-        { success: false, message: "Participant not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({
+        success: false,
+        message: "Participant not found",
+      });
     }
 
     if (participant[column] === true) {
@@ -76,24 +95,29 @@ export async function POST(req: Request) {
 
     if (uErr) {
       console.error("Supabase update error:", uErr);
-      return NextResponse.json(
-        { success: false, message: "Failed to update participant" },
-        { status: 500 }
-      );
+      return NextResponse.json({ success: false, message: "Failed to update" });
     }
-    const { error: logErr } = await supabase.from("logs").insert({
+
+    await supabase.from("logs").insert({
       participant_id: uid,
       type: body.type,
       scanner: body.scanner ?? "unknown",
       metadata: {},
     });
 
-    if (logErr) {
-      console.error("Supabase log insert error:", logErr);
-      return NextResponse.json({
-        success: true,
-        message: `Marked ${body.type} for ${participant.name} (log failed)`,
-      });
+    const row = [
+      new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+      uid,
+      participant.name ?? "",
+      body.type,
+      body.scanner ?? "unknown",
+      "SUCCESS",
+    ];
+
+    try {
+      await appendToGoogleSheet(row);
+    } catch (sheetErr) {
+      console.error("Sheet update failed:", sheetErr);
     }
 
     return NextResponse.json({
@@ -103,9 +127,6 @@ export async function POST(req: Request) {
     });
   } catch (err) {
     console.error("Server error:", err);
-    return NextResponse.json(
-      { success: false, message: "Server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, message: "Server error" });
   }
 }
