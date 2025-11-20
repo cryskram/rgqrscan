@@ -32,7 +32,7 @@ async function appendToGoogleSheet(row: any[]) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.GOOGLE_SHEET_ID!,
-    range: "Sheet1!A:F",
+    range: "Sheet1!A:G",
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [row] },
   });
@@ -109,6 +109,7 @@ export async function POST(req: Request) {
       new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
       uid,
       participant.name ?? "",
+      participant.email ?? "",
       body.type,
       body.scanner ?? "unknown",
       "SUCCESS",
